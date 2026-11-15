@@ -9,18 +9,20 @@ import math
 app = Flask(__name__)
 CORS(app)
 
-# Load trained ML model
+# Base project directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(
-    BASE_DIR, "crop_model.pkl"
-)
+# Configurable model filename
+MODEL_FILENAME = os.getenv("MODEL_FILENAME", "crop_model.pkl")
+MODEL_PATH = os.path.join(BASE_DIR, MODEL_FILENAME)
 
+# Load trained ML model
 with open(MODEL_PATH, "rb") as file:
     model = pickle.load(file)
 
 print("AgroSanket ML Model Loaded Successfully!")
 
+# Required input fields
 REQUIRED_FIELDS = [
     "N", "P", "K",
     "temperature", "humidity",
@@ -47,6 +49,7 @@ def predict():
                 "error": "Please send valid JSON data."
             }), 400
 
+        # Check missing fields
         missing = [
             field for field in REQUIRED_FIELDS
             if field not in data
@@ -58,9 +61,11 @@ def predict():
                 "fields": missing
             }), 400
 
+        # Convert inputs into numbers
         features = []
 
         for field in REQUIRED_FIELDS:
+
             value = data[field]
 
             if isinstance(value, bool) or value is None:
@@ -77,6 +82,7 @@ def predict():
 
             features.append(value)
 
+        # Validate physical ranges
         N, P, K, temperature, humidity, ph, rainfall = features
 
         if N < 0 or P < 0 or K < 0 or rainfall < 0:
@@ -99,11 +105,21 @@ def predict():
                 "error": "pH must be between 0 and 14."
             }), 400
 
-        # Predict crop
+        # Predict probabilities for all crops
         probabilities = model.predict_proba([features])[0]
 
+        # Get all crop probabilities
+        all_probabilities = {
+            str(crop): round(float(probability) * 100, 2)
+            for crop, probability in zip(
+                model.classes_, probabilities
+            )
+        }
+
+        # Get top 3 crop indices
         top_indices = np.argsort(probabilities)[::-1][:3]
 
+        # Prepare top 3 recommendations
         recommendations = []
 
         for index in top_indices:
@@ -114,10 +130,12 @@ def predict():
                 )
             })
 
+        # Return API response
         return jsonify({
             "success": True,
             "recommended_crop": recommendations[0]["crop"],
-            "top_recommendations": recommendations
+            "top_recommendations": recommendations,
+            "all_probabilities": all_probabilities
         })
 
     except (ValueError, TypeError):
@@ -132,5 +150,13 @@ def predict():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
 
+    PORT = int(os.getenv("PORT", 5000))
+    HOST = os.getenv("HOST", "0.0.0.0")
+    DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+
+    app.run(
+        host=HOST,
+        port=PORT,
+        debug=DEBUG
+    )
